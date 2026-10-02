@@ -1,0 +1,37 @@
+name: macOS checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: swift --version
+      - name: Check configs and server lifecycle
+        run: ./scripts/check.sh
+      - name: Build app
+        run: ./scripts/build-app.sh
+      - name: Verify bundle
+        run: |
+          plutil -lint build/SuperUp.app/Contents/Info.plist
+          codesign --verify --strict --verbose=2 build/SuperUp.app
