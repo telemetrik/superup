@@ -23,6 +23,7 @@ public final class ServerManager {
         var failedChecks = 0
         var restartFailures = 0
         var nextRestartAt: Date?
+        var nextProbeAt = Date.distantPast
         var message = "Checking…"
 
         init(config: AppConfig) { self.config = config }
@@ -30,6 +31,7 @@ public final class ServerManager {
 
     private var entries: [String: Entry] = [:]
     private var timer: Timer?
+    private var stopped = false
     private let configDirectory: URL
     private let logDirectory: URL
     private let openBrowser: (URL) -> Void
@@ -50,10 +52,8 @@ public final class ServerManager {
     public var healthyCount: Int { entries.values.filter(\.healthy).count }
 
     public func start() {
+        stopped = false
         reloadConfigs()
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
     }
 
     public func reloadConfigs() {
@@ -68,6 +68,7 @@ public final class ServerManager {
         for config in loaded.apps where entries[config.id] == nil {
             entries[config.id] = Entry(config: config)
         }
+        for entry in entries.values { entry.nextProbeAt = .distantPast }
         onUpdate?()
         tick()
     }
@@ -78,16 +79,7 @@ public final class ServerManager {
         entry.stoppedByUser = false
         if !entry.healthy { entry.message = "Checking…" }
         onUpdate?()
-        Task {
-            let healthy = await HealthProbe.check(entry.config)
-            guard entries[id] === entry else { return }
-            if healthy {
-                markHealthy(entry)
-            } else {
-                entry.healthy = false
-                startIfNeeded(id, force: true)
-            }
-        }
+        probe(id, force: true)
     }
 
     public func stop(_ id: String) {
@@ -99,10 +91,13 @@ public final class ServerManager {
         entry.healthy = false
         entry.message = "Stopping…"
         process.terminate()
+        entry.nextProbeAt = Date().addingTimeInterval(3)
+        scheduleNextTick()
         onUpdate?()
     }
 
     public func stopAll() {
+        stopped = true
         timer?.invalidate()
         timer = nil
         for entry in entries.values {
@@ -119,35 +114,58 @@ public final class ServerManager {
 
     private func tick() {
         for id in entries.keys { probe(id) }
+        scheduleNextTick()
     }
 
-    private func probe(_ id: String) {
-        guard let entry = entries[id], !entry.probeInFlight else { return }
+    private func scheduleNextTick() {
+        timer?.invalidate()
+        timer = nil
+        guard !stopped else { return }
+        guard let next = entries.values.filter({ !$0.probeInFlight }).map(\.nextProbeAt).min() else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: max(0.05, next.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        timer?.tolerance = 1
+    }
+
+    private func probe(_ id: String, force: Bool = false) {
+        guard let entry = entries[id], !entry.probeInFlight,
+              force || Date() >= entry.nextProbeAt else { return }
         entry.probeInFlight = true
         Task {
             let healthy = await HealthProbe.check(entry.config)
-            guard entries[id] === entry else { return }
+            guard !stopped, entries[id] === entry else { return }
             entry.probeInFlight = false
             if healthy {
                 markHealthy(entry)
+            } else if entry.pendingOpen && entry.process == nil && !entry.stoppedByUser {
+                entry.healthy = false
+                startIfNeeded(id, force: true)
             } else {
                 markUnhealthy(id, entry: entry)
             }
+            // Fast startup/recovery, infrequent checks once stable or stopped.
+            let interval: TimeInterval = entry.healthy ? 30 : (entry.process != nil || entry.shouldMaintain ? 3 : 60)
+            entry.nextProbeAt = Date().addingTimeInterval(interval)
+            if let restart = entry.nextRestartAt { entry.nextProbeAt = min(entry.nextProbeAt, restart) }
+            scheduleNextTick()
         }
     }
 
     private func markHealthy(_ entry: Entry) {
+        let message = entry.process == nil ? "Running externally" : "Running"
+        let changed = !entry.healthy || entry.message != message
         entry.healthy = true
         entry.everHealthy = true
         entry.failedChecks = 0
         entry.restartFailures = 0
         entry.nextRestartAt = nil
-        entry.message = entry.process == nil ? "Running externally" : "Running"
+        entry.message = message
         if entry.pendingOpen {
             entry.pendingOpen = false
             openBrowser(entry.config.browserURL)
         }
-        onUpdate?()
+        if changed { onUpdate?() }
     }
 
     private func markUnhealthy(_ id: String, entry: Entry) {
@@ -177,6 +195,7 @@ public final class ServerManager {
         entry.everHealthy = false
         entry.nextRestartAt = nil
         entry.message = "Starting…"
+        entry.nextProbeAt = Date().addingTimeInterval(3)
         let logURL = logDirectory.appendingPathComponent("\(id).log")
         do {
             let process = try ManagedProcess(command: entry.config.command, directory: entry.config.expandedDirectory, logURL: logURL) { [weak self] pid, _ in
@@ -210,5 +229,7 @@ public final class ServerManager {
         let delay = delays[min(entry.restartFailures, delays.count - 1)]
         entry.restartFailures += 1
         entry.nextRestartAt = Date().addingTimeInterval(delay)
+        entry.nextProbeAt = entry.nextRestartAt!
+        scheduleNextTick()
     }
 }

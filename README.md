@@ -89,15 +89,18 @@ commands in the foreground and avoid interactive prompts or password requests.
   are left running.
 
 Starting SuperUp, including at login, does not automatically start any server.
-After you start one through the menu, SuperUp checks it every three seconds
-and restarts it after an unexpected exit or repeated failed health checks.
+Healthy servers are checked every 30 seconds; stopped apps every minute.
+Startup and recovery checks run every three seconds, and clicking an app checks
+immediately. SuperUp restarts owned servers after an unexpected exit or repeated
+failed health checks. Use a lightweight `healthURL` to avoid rendering your app
+for each check, with `expectedText` matching that endpoint’s response.
 Repeated start failures back off to a maximum delay of one minute.
 
 ## Logs and troubleshooting
 
 Logs live in `~/Library/Logs/SuperUp/`. Each app has a current `<id>.log` and
 at most one `<id>.log.1` archive. SuperUp checks log size before starting a
-server and every three seconds while it runs. At 5 MiB it saves the newest
+server and every 15 seconds while it runs. At 5 MiB it saves the newest
 5 MiB to the archive, replacing the previous archive, and truncates the
 current file without restarting the server.
 

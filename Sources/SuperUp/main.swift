@@ -10,6 +10,7 @@ final class SuperUpApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var manager: ServerManager!
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
+    private let menuImageSize = NSSize(width: 12, height: 12)
     private var configError: String?
     private var loginError: String?
 
@@ -61,19 +62,21 @@ final class SuperUpApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let item = NSMenuItem(title: title, action: #selector(selectApp(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = status.config.id
-            item.image = dotImage(status.healthy ? .systemGreen : .systemRed)
+            item.image = menuImage(status.healthy ? .systemGreen : .systemRed)
             menu.addItem(item)
 
             if status.owned {
-                let stop = NSMenuItem(title: "    Stop \(status.config.name)", action: #selector(stopApp(_:)), keyEquivalent: "")
+                let stop = NSMenuItem(title: "Stop \(status.config.name)", action: #selector(stopApp(_:)), keyEquivalent: "")
                 stop.target = self
                 stop.representedObject = status.config.id
+                stop.image = menuImage()
                 menu.addItem(stop)
             }
             if let logURL = manager.logURL(for: status.config.id), FileManager.default.fileExists(atPath: logURL.path) {
-                let log = NSMenuItem(title: "    View Log", action: #selector(viewLog(_:)), keyEquivalent: "")
+                let log = NSMenuItem(title: "View Log", action: #selector(viewLog(_:)), keyEquivalent: "")
                 log.target = self
                 log.representedObject = status.config.id
+                log.image = menuImage()
                 menu.addItem(log)
             }
         }
@@ -121,10 +124,12 @@ final class SuperUpApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item)
     }
 
-    private func dotImage(_ color: NSColor) -> NSImage {
-        let image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+    private func menuImage(_ color: NSColor? = nil) -> NSImage {
+        let image = NSImage(size: menuImageSize, flipped: false) { rect in
+            if let color {
+                color.setFill()
+                NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+            }
             return true
         }
         image.isTemplate = false

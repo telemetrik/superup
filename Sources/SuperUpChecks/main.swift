@@ -144,6 +144,11 @@ struct Checks {
         manager.select("fixture")
         try await waitUntil { manager.statuses.first?.healthy == true && opened.count == 1 }
         precondition(manager.statuses.first?.owned == true)
+        let runningLog = logs.appendingPathComponent("fixture.log")
+        let beforeIdle = try String(contentsOf: runningLog)
+        try await Task.sleep(nanoseconds: 4_000_000_000)
+        let afterIdle = try String(contentsOf: runningLog)
+        precondition(afterIdle == beforeIdle, "a healthy server must not be rendered every three seconds")
 
         manager.select("fixture")
         try await waitUntil { opened.count == 2 }

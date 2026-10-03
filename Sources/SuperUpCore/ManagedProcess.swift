@@ -47,7 +47,7 @@ public final class ManagedProcess {
         pid = child
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "SuperUp.log.\(child)", qos: .utility))
         logTimer = timer
-        timer.schedule(deadline: .now() + 3, repeating: 3)
+        timer.schedule(deadline: .now() + 15, repeating: 15, leeway: .seconds(3))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             do {
